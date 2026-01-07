@@ -236,7 +236,7 @@ function generateVideo(routeText, videoId, callback) {
 
       workingCtx.font = '18px "Circular"';
       workingCtx.fillStyle = '#000';
-      const countdownText = `Ticket expires in: 0h:${minutes}m:${seconds}s`;
+      const countdownText = `Ticket expires in: 0h: ${minutes}m: ${seconds}s`;
       workingCtx.fillText(countdownText, 83 + 285 / 2, 608 + 33 / 2);
 
       outputCtx.clearRect(0, 0, templateWidth, templateHeight);
