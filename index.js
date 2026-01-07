@@ -38,7 +38,7 @@ function generateVideo(routeText, videoId, callback) {
   const workingCtx = workingCanvas.getContext('2d');
 
   const fps = 30;
-  const videoDurationSeconds = 20;
+  const videoDurationSeconds = 30;
   const totalFrames = videoDurationSeconds * fps;
 
   const countdownStartSeconds = 59 * 60 + 59;
