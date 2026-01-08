@@ -51,7 +51,7 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
   const videoDurationSeconds = 30;
   const totalFrames = videoDurationSeconds * fps;
 
-  const countdownStartSeconds = 59 * 60 + 59;
+  const countdownStartSeconds = 57 * 60 + 59;
   const animationAmplitude = 12;
   const animationSpeed = 0.08;
 
