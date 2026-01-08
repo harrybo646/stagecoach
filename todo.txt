@@ -1,7 +1,5 @@
 Increase video quality
-Add padding on UI elements for realism
-Shadow on grey box
-Predicted time box where the user can enter the expected time of their bus
 Reduce generation time
 Find siginificance of 'random' word
 Changing colour of box & circles
+Progress bar

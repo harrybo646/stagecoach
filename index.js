@@ -28,11 +28,13 @@ if (fs.existsSync(fontPath)) {
 }
 
 // ---------------------------
-// VIDEO GENERATION FUNCTION
+// VIDEO GENERATION FUNCTION (OPTIMIZED)
 // ---------------------------
-function generateVideo(routeText, videoId, callback) {
-  const workingWidth = 452;
+function generateVideo(routeText, videoId, expectedTime, callback) {
+  const originalWidth = 452;
+  const workingWidth = 702;
   const workingHeight = 836;
+  const boxExtension = 125;
   
   const workingCanvas = createCanvas(workingWidth, workingHeight);
   const workingCtx = workingCanvas.getContext('2d');
@@ -60,13 +62,15 @@ function generateVideo(routeText, videoId, callback) {
   const generationStartTime = new Date();
 
   const circles = [];
-  const numCircles = 15;
+  const numCircles = 10; // Reduced from 15 for better performance
   const baseBoxY = 496;
   const boxHeight = 83;
+  const circleAreaWidth = 452;
+  const circleAreaStart = (workingWidth - circleAreaWidth) / 2;
 
   for (let i = 0; i < numCircles; i++) {
     circles.push({
-      x: Math.random() * workingWidth,
+      x: circleAreaStart + Math.random() * circleAreaWidth,
       y: baseBoxY + Math.random() * boxHeight,
       radius: 10 + Math.random() * 30,
       vx: (Math.random() - 0.5) * 3,
@@ -100,11 +104,6 @@ function generateVideo(routeText, videoId, callback) {
     });
   }
 
-  const framesDir = path.join(__dirname, 'frames', videoId);
-  if (!fs.existsSync(framesDir)) {
-    fs.mkdirSync(framesDir, { recursive: true });
-  }
-
   loadImage(path.join(__dirname, 'template.png')).then(templateImage => {
     const templateWidth = templateImage.width;
     const templateHeight = templateImage.height;
@@ -112,6 +111,7 @@ function generateVideo(routeText, videoId, callback) {
     const outputCanvas = createCanvas(templateWidth, templateHeight);
     const outputCtx = outputCanvas.getContext('2d');
     
+    // Pre-render static elements to cache canvas
     const cachedWorkingCanvas = createCanvas(workingWidth, workingHeight);
     const cachedWorkingCtx = cachedWorkingCanvas.getContext('2d');
     
@@ -119,16 +119,48 @@ function generateVideo(routeText, videoId, callback) {
     cachedWorkingCtx.textAlign = 'center';
     cachedWorkingCtx.textBaseline = 'middle';
     cachedWorkingCtx.fillStyle = '#000';
-    const titleCenterX = workingWidth / 2;
+    const titleCenterX = boxExtension + originalWidth / 2;
     const titleCenterY = 376 + 66 / 2;
-    const titleMaxWidth = workingWidth - 122;
+    const titleMaxWidth = originalWidth - 122;
     wrapText(cachedWorkingCtx, routeText, titleCenterX, titleCenterY, titleMaxWidth, 36);
     
     cachedWorkingCtx.font = '18px "Circular"';
     const now = new Date();
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sept','Oct','Nov','Dec'];
     const validText = `Valid from: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}, ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
-    cachedWorkingCtx.fillText(validText, workingWidth / 2, 448 + 33 / 2);
+    cachedWorkingCtx.fillText(validText, boxExtension + originalWidth / 2, 448 + 33 / 2);
+
+    // Setup FFmpeg to receive raw video frames via stdin
+    const videosDir = path.join(__dirname, 'videos');
+    if (!fs.existsSync(videosDir)) {
+      fs.mkdirSync(videosDir);
+    }
+    const outputPath = path.join(videosDir, `${videoId}.mp4`);
+
+    const args = [
+      '-y',
+      '-f', 'rawvideo',
+      '-vcodec', 'rawvideo',
+      '-pix_fmt', 'rgba',
+      '-s', `${templateWidth}x${templateHeight}`,
+      '-framerate', String(fps),
+      '-i', '-', // Read from stdin
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'ultrafast',
+      outputPath
+    ];
+
+    const ffmpegProcess = spawn(ffmpegPath, args);
+    
+    let errorOutput = '';
+    ffmpegProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+
+    // Generate and stream frames directly to FFmpeg
+    let frameCount = 0;
+    const startTime = Date.now();
 
     for (let i = 0; i < totalFrames; i++) {
       workingCtx.clearRect(0, 0, workingWidth, workingHeight);
@@ -142,7 +174,7 @@ function generateVideo(routeText, videoId, callback) {
       const estimatedTime = new Date(generationStartTime.getTime() + (currentSecond * 1000));
       const estimatedHours = String(estimatedTime.getHours()).padStart(2, '0');
       const estimatedMinutes = String(estimatedTime.getMinutes()).padStart(2, '0');
-      const estimatedTimeString = `${estimatedHours}:${estimatedMinutes}`;
+      const estimatedTimeString = expectedTime || `${estimatedHours}:${estimatedMinutes}`;
 
       const t = currentSecond;
       const cycleDuration = 1 / animationSpeed;
@@ -161,6 +193,12 @@ function generateVideo(routeText, videoId, callback) {
 
       const avgTopY = baseBoxY + (tlPull + trPull) / 2;
 
+      // Draw grey box with shadow
+      workingCtx.shadowColor = 'rgba(0, 0, 0, 0.15)';
+      workingCtx.shadowBlur = 10;
+      workingCtx.shadowOffsetX = 0;
+      workingCtx.shadowOffsetY = 4;
+
       workingCtx.fillStyle = '#D9D9D9';
       workingCtx.beginPath();
       workingCtx.moveTo(0, baseBoxY + tlPull);
@@ -170,13 +208,19 @@ function generateVideo(routeText, videoId, callback) {
       workingCtx.closePath();
       workingCtx.fill();
 
+      workingCtx.shadowColor = 'transparent';
+      workingCtx.shadowBlur = 0;
+      workingCtx.shadowOffsetX = 0;
+      workingCtx.shadowOffsetY = 0;
+
+      // Clip and draw circles
       workingCtx.save();
       
       workingCtx.beginPath();
-      workingCtx.moveTo(0, baseBoxY + tlPull);
-      workingCtx.lineTo(workingWidth, baseBoxY + trPull);
-      workingCtx.lineTo(workingWidth, baseBoxY + boxHeight + trPull);
-      workingCtx.lineTo(0, baseBoxY + boxHeight + tlPull);
+      workingCtx.moveTo(circleAreaStart, baseBoxY + tlPull);
+      workingCtx.lineTo(circleAreaStart + circleAreaWidth, baseBoxY + trPull);
+      workingCtx.lineTo(circleAreaStart + circleAreaWidth, baseBoxY + boxHeight + trPull);
+      workingCtx.lineTo(circleAreaStart, baseBoxY + boxHeight + tlPull);
       workingCtx.closePath();
       workingCtx.clip();
 
@@ -184,8 +228,8 @@ function generateVideo(routeText, videoId, callback) {
         circle.x += circle.vx;
         circle.y += circle.vy;
 
-        if (circle.x < -circle.radius) circle.x = workingWidth + circle.radius;
-        if (circle.x > workingWidth + circle.radius) circle.x = -circle.radius;
+        if (circle.x < circleAreaStart - circle.radius) circle.x = circleAreaStart + circleAreaWidth + circle.radius;
+        if (circle.x > circleAreaStart + circleAreaWidth + circle.radius) circle.x = circleAreaStart - circle.radius;
 
         if (circle.y < baseBoxY - circle.radius) circle.y = baseBoxY + boxHeight + circle.radius;
         if (circle.y > baseBoxY + boxHeight + circle.radius) circle.y = baseBoxY - circle.radius;
@@ -200,6 +244,7 @@ function generateVideo(routeText, videoId, callback) {
 
       workingCtx.restore();
 
+      // Text switching logic
       const switchCycle = 2;
       const cycleTime = currentSecond % (switchCycle * 2);
       const fadeDuration = 0.3;
@@ -207,18 +252,27 @@ function generateVideo(routeText, videoId, callback) {
       let textToShow;
       let textOpacity = 1;
       
-      if (cycleTime < switchCycle) {
-        textToShow = selectedWord;
-        if (cycleTime > switchCycle - fadeDuration) {
-          textOpacity = (switchCycle - cycleTime) / fadeDuration;
+      if (expectedTime) {
+        textToShow = estimatedTimeString;
+        if (cycleTime < fadeDuration) {
+          textOpacity = cycleTime / fadeDuration;
+        } else if (cycleTime > (switchCycle * 2) - fadeDuration) {
+          textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
         }
       } else {
-        textToShow = estimatedTimeString;
-        if (cycleTime < switchCycle + fadeDuration) {
-          textOpacity = (cycleTime - switchCycle) / fadeDuration;
-        }
-        if (cycleTime > (switchCycle * 2) - fadeDuration) {
-          textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
+        if (cycleTime < switchCycle) {
+          textToShow = selectedWord;
+          if (cycleTime > switchCycle - fadeDuration) {
+            textOpacity = (switchCycle - cycleTime) / fadeDuration;
+          }
+        } else {
+          textToShow = estimatedTimeString;
+          if (cycleTime < switchCycle + fadeDuration) {
+            textOpacity = (cycleTime - switchCycle) / fadeDuration;
+          }
+          if (cycleTime > (switchCycle * 2) - fadeDuration) {
+            textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
+          }
         }
       }
 
@@ -227,55 +281,54 @@ function generateVideo(routeText, videoId, callback) {
       workingCtx.textBaseline = 'middle';
       workingCtx.fillStyle = `rgba(0, 0, 0, ${textOpacity})`;
       
-      const wordCenterX = workingWidth / 2;
+      const wordCenterX = boxExtension + originalWidth / 2;
       const textRelativeY = 63 / 2;
       const wordCenterY = avgTopY + 10 + textRelativeY;
       
-      const wordMaxWidth = workingWidth - 122;
+      const wordMaxWidth = originalWidth - 122;
       wrapText(workingCtx, textToShow, wordCenterX, wordCenterY, wordMaxWidth, 48);
 
       workingCtx.font = '18px "Circular"';
       workingCtx.fillStyle = '#000';
       const countdownText = `Ticket expires in: 0h: ${minutes}m: ${seconds}s`;
-      workingCtx.fillText(countdownText, 83 + 285 / 2, 608 + 33 / 2);
+      workingCtx.fillText(countdownText, boxExtension + 83 + 285 / 2, 608 + 33 / 2);
 
+      // Composite final frame
       outputCtx.clearRect(0, 0, templateWidth, templateHeight);
       outputCtx.drawImage(templateImage, 0, 0);
-      outputCtx.drawImage(workingCanvas, 125, 224);
+      outputCtx.drawImage(workingCanvas, 0, 224);
 
-      const frameNumber = String(i).padStart(6, '0');
-      fs.writeFileSync(path.join(framesDir, `frame_${frameNumber}.png`), outputCanvas.toBuffer('image/png'));
+      // Stream raw buffer directly to FFmpeg (no PNG encoding!)
+      const buffer = outputCanvas.toBuffer('raw');
+      ffmpegProcess.stdin.write(buffer);
+
+      frameCount++;
+      if (frameCount % 150 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const fps_actual = (frameCount / elapsed).toFixed(1);
+        console.log(`  Progress: ${frameCount}/${totalFrames} frames (${fps_actual} fps)`);
+      }
     }
 
-    const inputPattern = path.join(framesDir, 'frame_%06d.png');
-    const videosDir = path.join(__dirname, 'videos');
-    if (!fs.existsSync(videosDir)) {
-      fs.mkdirSync(videosDir);
-    }
-    const outputPath = path.join(videosDir, `${videoId}.mp4`);
-
-    const args = [
-      '-y',
-      '-framerate', String(fps),
-      '-start_number', '0',
-      '-i', inputPattern,
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-preset', 'ultrafast',
-      outputPath
-    ];
-
-    const ffmpegProcess = spawn(ffmpegPath, args);
+    // Close stdin to signal completion
+    ffmpegProcess.stdin.end();
 
     ffmpegProcess.on('close', code => {
-      fs.rmSync(framesDir, { recursive: true });
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
       
       if (code === 0) {
+        console.log(`  ✓ Completed in ${totalTime}s`);
         callback(null, videoId);
       } else {
-        callback(new Error('FFmpeg failed'));
+        console.error('FFmpeg error:', errorOutput);
+        callback(new Error('FFmpeg failed with code ' + code));
       }
     });
+
+    ffmpegProcess.on('error', (err) => {
+      callback(err);
+    });
+
   }).catch(err => {
     callback(err);
   });
@@ -340,6 +393,7 @@ app.get('/generate', (req, res) => {
       <form id="generateForm">
         <input type="text" id="from" name="from" placeholder="From" required>
         <input type="text" id="to" name="to" placeholder="To" required>
+        <input type="time" id="expectedTime" name="expectedTime" placeholder="Expected Time (optional)">
         <button type="submit">Generate</button>
       </form>
       <div id="result"></div>
@@ -350,6 +404,7 @@ app.get('/generate', (req, res) => {
           
           const from = document.getElementById('from').value;
           const to = document.getElementById('to').value;
+          const expectedTime = document.getElementById('expectedTime').value;
           const button = e.target.querySelector('button');
           const result = document.getElementById('result');
           
@@ -361,7 +416,7 @@ app.get('/generate', (req, res) => {
             const response = await fetch('/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ from, to })
+              body: JSON.stringify({ from, to, expectedTime })
             });
             
             const data = await response.json();
@@ -391,7 +446,7 @@ app.get('/generate', (req, res) => {
 });
 
 app.post('/generate', (req, res) => {
-  const { from, to } = req.body;
+  const { from, to, expectedTime } = req.body;
   
   if (!from || !to) {
     return res.json({ success: false, error: 'Missing from or to' });
@@ -405,7 +460,7 @@ app.post('/generate', (req, res) => {
   
   console.log(`[${new Date().toISOString()}] Generating: ${routeText}`);
   
-  generateVideo(routeText, videoId, (err) => {
+  generateVideo(routeText, videoId, expectedTime || null, (err) => {
     if (err) {
       console.error('Error:', err);
       return res.json({ success: false, error: err.message });
