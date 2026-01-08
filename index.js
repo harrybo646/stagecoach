@@ -27,8 +27,16 @@ if (fs.existsSync(fontPath)) {
   process.exit(1);
 }
 
+// RGB to YUV conversion
+function rgbToYuv(r, g, b) {
+  const y = Math.round(16 + (65.738 * r + 129.057 * g + 25.064 * b) / 256);
+  const u = Math.round(128 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256);
+  const v = Math.round(128 + (112.439 * r - 94.154 * g - 18.285 * b) / 256);
+  return { y, u, v };
+}
+
 // ---------------------------
-// VIDEO GENERATION FUNCTION (OPTIMIZED)
+// VIDEO GENERATION FUNCTION (YUV)
 // ---------------------------
 function generateVideo(routeText, videoId, expectedTime, callback) {
   const originalWidth = 452;
@@ -44,7 +52,6 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
   const totalFrames = videoDurationSeconds * fps;
 
   const countdownStartSeconds = 59 * 60 + 59;
-
   const animationAmplitude = 12;
   const animationSpeed = 0.08;
 
@@ -62,7 +69,7 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
   const generationStartTime = new Date();
 
   const circles = [];
-  const numCircles = 10; // Reduced from 15 for better performance
+  const numCircles = 10;
   const baseBoxY = 496;
   const boxHeight = 83;
   const circleAreaWidth = 452;
@@ -130,7 +137,7 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
     const validText = `Valid from: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}, ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
     cachedWorkingCtx.fillText(validText, boxExtension + originalWidth / 2, 448 + 33 / 2);
 
-    // Setup FFmpeg to receive raw video frames via stdin
+    // Setup FFmpeg for YUV output
     const videosDir = path.join(__dirname, 'videos');
     if (!fs.existsSync(videosDir)) {
       fs.mkdirSync(videosDir);
@@ -141,10 +148,10 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       '-y',
       '-f', 'rawvideo',
       '-vcodec', 'rawvideo',
-      '-pix_fmt', 'rgba',
+      '-pix_fmt', 'yuv420p',
       '-s', `${templateWidth}x${templateHeight}`,
       '-framerate', String(fps),
-      '-i', '-', // Read from stdin
+      '-i', '-',
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-preset', 'ultrafast',
@@ -158,7 +165,11 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       errorOutput += data.toString();
     });
 
-    // Generate and stream frames directly to FFmpeg
+    // YUV buffer setup
+    const yPlaneSize = templateWidth * templateHeight;
+    const uvPlaneSize = (templateWidth / 2) * (templateHeight / 2);
+    const yuvBufferSize = yPlaneSize + uvPlaneSize * 2;
+
     let frameCount = 0;
     const startTime = Date.now();
 
@@ -193,7 +204,6 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
 
       const avgTopY = baseBoxY + (tlPull + trPull) / 2;
 
-      // Draw grey box with shadow
       workingCtx.shadowColor = 'rgba(0, 0, 0, 0.15)';
       workingCtx.shadowBlur = 10;
       workingCtx.shadowOffsetX = 0;
@@ -213,7 +223,6 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       workingCtx.shadowOffsetX = 0;
       workingCtx.shadowOffsetY = 0;
 
-      // Clip and draw circles
       workingCtx.save();
       
       workingCtx.beginPath();
@@ -244,7 +253,6 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
 
       workingCtx.restore();
 
-      // Text switching logic
       const switchCycle = 2;
       const cycleTime = currentSecond % (switchCycle * 2);
       const fadeDuration = 0.3;
@@ -298,9 +306,51 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       outputCtx.drawImage(templateImage, 0, 0);
       outputCtx.drawImage(workingCanvas, 0, 224);
 
-      // Stream raw buffer directly to FFmpeg (no PNG encoding!)
-      const buffer = outputCanvas.toBuffer('raw');
-      ffmpegProcess.stdin.write(buffer);
+      // Convert RGBA canvas to YUV420p
+      const rgbaBuffer = outputCanvas.toBuffer('raw');
+      const yuvBuffer = Buffer.alloc(yuvBufferSize);
+
+      // Draw 702x216 box at center top (RGB 13, 22, 29)
+      const topboxWidth = 702;
+      const topboxHeight = 216;
+      const topboxX = (templateWidth - topboxWidth) / 2;
+      const topboxY = 0;
+      const topboxColor = rgbToYuv(13, 22, 29);
+
+      // Convert RGBA to YUV420p
+      for (let y = 0; y < templateHeight; y++) {
+        for (let x = 0; x < templateWidth; x++) {
+          const rgbaIndex = (y * templateWidth + x) * 4;
+          const r = rgbaBuffer[rgbaIndex];
+          const g = rgbaBuffer[rgbaIndex + 1];
+          const b = rgbaBuffer[rgbaIndex + 2];
+
+          // Check if we're inside the box
+          let yVal, uVal, vVal;
+          if (x >= topboxX && x < topboxX + topboxWidth && y >= topboxY && y < topboxY + topboxHeight) {
+            yVal = topboxColor.y;
+            uVal = topboxColor.u;
+            vVal = topboxColor.v;
+          } else {
+            const yuv = rgbToYuv(r, g, b);
+            yVal = yuv.y;
+            uVal = yuv.u;
+            vVal = yuv.v;
+          }
+
+          // Y plane
+          yuvBuffer[y * templateWidth + x] = yVal;
+
+          // U and V planes (subsampled)
+          if (y % 2 === 0 && x % 2 === 0) {
+            const uvIndex = (y / 2) * (templateWidth / 2) + (x / 2);
+            yuvBuffer[yPlaneSize + uvIndex] = uVal;
+            yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = vVal;
+          }
+        }
+      }
+
+      ffmpegProcess.stdin.write(yuvBuffer);
 
       frameCount++;
       if (frameCount % 150 === 0) {
@@ -310,7 +360,6 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       }
     }
 
-    // Close stdin to signal completion
     ffmpegProcess.stdin.end();
 
     ffmpegProcess.on('close', code => {
@@ -343,7 +392,7 @@ app.get('/generate', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Bus Ticket Generator</title>
+      <title>Bus Ticket Generator (YUV)</title>
       <style>
         body {
           font-family: Arial, sans-serif;
@@ -385,6 +434,12 @@ app.get('/generate', (req, res) => {
         .loading {
           text-align: center;
           color: #666;
+        }
+        .info {
+          background: #d4edda;
+          padding: 15px;
+          margin: 20px 0;
+          border-left: 4px solid #28a745;
         }
       </style>
     </head>
