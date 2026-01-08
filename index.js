@@ -444,7 +444,7 @@ app.get('/generate', (req, res) => {
       </style>
     </head>
     <body>
-      <h1>Bus Ticket Generator</h1>
+      <h1>Bus Ticket Generator - Updates pending</h1>
       <form id="generateForm">
         <input type="text" id="from" name="from" placeholder="From" required>
         <input type="text" id="to" name="to" placeholder="To" required>
