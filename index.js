@@ -72,7 +72,8 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
   const numCircles = 10;
   const baseBoxY = 496;
   const boxHeight = 83;
-  const circleAreaWidth = 452;
+  // Reduced circle area by 50px on each side (452 - 100 = 352)
+  const circleAreaWidth = 352;
   const circleAreaStart = (workingWidth - circleAreaWidth) / 2;
 
   for (let i = 0; i < numCircles; i++) {
@@ -128,7 +129,8 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
     cachedWorkingCtx.fillStyle = '#000';
     const titleCenterX = boxExtension + originalWidth / 2;
     const titleCenterY = 376 + 66 / 2;
-    const titleMaxWidth = originalWidth - 122;
+    // Expanded max width by 20px total (10px each side): 122 - 20 = 102
+    const titleMaxWidth = originalWidth - 102;
     wrapText(cachedWorkingCtx, routeText, titleCenterX, titleCenterY, titleMaxWidth, 36);
     
     cachedWorkingCtx.font = '18px "Circular"';
@@ -260,27 +262,19 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       let textToShow;
       let textOpacity = 1;
       
-      if (expectedTime) {
-        textToShow = estimatedTimeString;
-        if (cycleTime < fadeDuration) {
-          textOpacity = cycleTime / fadeDuration;
-        } else if (cycleTime > (switchCycle * 2) - fadeDuration) {
-          textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
+      // Always swap between selectedWord and estimatedTimeString
+      if (cycleTime < switchCycle) {
+        textToShow = selectedWord;
+        if (cycleTime > switchCycle - fadeDuration) {
+          textOpacity = (switchCycle - cycleTime) / fadeDuration;
         }
       } else {
-        if (cycleTime < switchCycle) {
-          textToShow = selectedWord;
-          if (cycleTime > switchCycle - fadeDuration) {
-            textOpacity = (switchCycle - cycleTime) / fadeDuration;
-          }
-        } else {
-          textToShow = estimatedTimeString;
-          if (cycleTime < switchCycle + fadeDuration) {
-            textOpacity = (cycleTime - switchCycle) / fadeDuration;
-          }
-          if (cycleTime > (switchCycle * 2) - fadeDuration) {
-            textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
-          }
+        textToShow = estimatedTimeString;
+        if (cycleTime < switchCycle + fadeDuration) {
+          textOpacity = (cycleTime - switchCycle) / fadeDuration;
+        }
+        if (cycleTime > (switchCycle * 2) - fadeDuration) {
+          textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
         }
       }
 
@@ -293,7 +287,8 @@ function generateVideo(routeText, videoId, expectedTime, callback) {
       const textRelativeY = 63 / 2;
       const wordCenterY = avgTopY + 10 + textRelativeY;
       
-      const wordMaxWidth = originalWidth - 122;
+      // Expanded max width by 20px total (10px each side): 122 - 20 = 102
+      const wordMaxWidth = originalWidth - 102;
       wrapText(workingCtx, textToShow, wordCenterX, wordCenterY, wordMaxWidth, 48);
 
       workingCtx.font = '18px "Circular"';
