@@ -21,6 +21,43 @@ app.use('/videos', express.static(path.join(__dirname, 'videos')));
 const jobStatus = new Map();
 
 // ---------------------------
+// SIZE & LAYOUT CONFIGURATION
+// ---------------------------
+const SIZE_CONFIG = {
+  // Canvas dimensions
+  originalWidth: 452,
+  workingWidth: 702,
+  workingHeight: 836,
+  
+  // Canvas adjustments
+  topExtension: 50,  // Changed from topReduction: 0
+  bottomExtension: 200,
+  sideExtension: 200,
+  
+  // Border configuration
+  borderWidth: 100,
+  cornerRadius: 15,
+  
+  // Box configuration
+  boxExtension: 125,
+  baseBoxY: 496,
+  boxHeight: 83,
+  
+  // Animation area
+  circleAreaWidth: 352,
+  
+  // Text positioning
+  titleY: 376,
+  titleHeight: 66,
+  validY: 448,
+  validHeight: 33,
+  countdownY: 608,
+  countdownHeight: 33,
+
+  yourTicketBottomMargin: 15  // Changed from yourTicketInsetFromCardTop
+};
+
+// ---------------------------
 // FONT REGISTRATION
 // ---------------------------
 const fontPath = path.join(__dirname, 'fonts', 'lineto-circular-medium.ttf');
@@ -67,10 +104,12 @@ class SeededRandom {
 // VIDEO GENERATION FUNCTION (OPTIMIZED)
 // ---------------------------
 async function generateVideo(routeText, videoId, expectedTime, callback) {
-  const originalWidth = 452;
-  const workingWidth = 702;
-  const workingHeight = 836;
-  const boxExtension = 125;
+  const { 
+    originalWidth, workingWidth, workingHeight, boxExtension, 
+    topExtension, bottomExtension, sideExtension, baseBoxY, boxHeight, circleAreaWidth,
+    borderWidth, cornerRadius, yourTicketBottomMargin,
+    titleY, titleHeight, validY, validHeight, countdownY, countdownHeight
+  } = SIZE_CONFIG;
   
   const workingCanvas = createCanvas(workingWidth, workingHeight);
   const workingCtx = workingCanvas.getContext('2d');
@@ -100,9 +139,6 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
 
   const circles = [];
   const numCircles = 10;
-  const baseBoxY = 496;
-  const boxHeight = 83;
-  const circleAreaWidth = 352;
   const circleAreaStart = (workingWidth - circleAreaWidth) / 2;
 
   for (let i = 0; i < numCircles; i++) {
@@ -146,7 +182,11 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
     const templateWidth = templateImage.width;
     const templateHeight = templateImage.height;
     
-    const outputCanvas = createCanvas(templateWidth, templateHeight);
+    // Calculate adjusted output dimensions
+    const adjustedHeight = templateHeight + topExtension + bottomExtension;
+    const adjustedWidth = templateWidth + (sideExtension * 2);
+    
+    const outputCanvas = createCanvas(adjustedWidth, adjustedHeight);
     const outputCtx = outputCanvas.getContext('2d');
     
     // Pre-render static elements to cache canvas
@@ -158,7 +198,7 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
     cachedWorkingCtx.textBaseline = 'middle';
     cachedWorkingCtx.fillStyle = '#000';
     const titleCenterX = boxExtension + originalWidth / 2;
-    const titleCenterY = 376 + 66 / 2;
+    const titleCenterY = titleY + titleHeight / 2;
     const titleMaxWidth = originalWidth - 102;
     wrapText(cachedWorkingCtx, routeText, titleCenterX, titleCenterY, titleMaxWidth, 36);
     
@@ -166,7 +206,7 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
     const now = new Date();
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sept','Oct','Nov','Dec'];
     const validText = `Valid from: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}, ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
-    cachedWorkingCtx.fillText(validText, boxExtension + originalWidth / 2, 448 + 33 / 2);
+    cachedWorkingCtx.fillText(validText, boxExtension + originalWidth / 2, validY + validHeight / 2);
 
     // Setup FFmpeg with proper color metadata
     const videosDir = path.join(__dirname, 'videos');
@@ -181,7 +221,7 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       '-pix_fmt', 'yuv420p',
       '-colorspace', 'bt709',
       '-color_range', 'tv',
-      '-s', `${templateWidth}x${templateHeight}`,
+      '-s', `${adjustedWidth}x${adjustedHeight}`,
       '-framerate', String(fps),
       '-i', '-',
       '-c:v', 'libx264',
@@ -202,41 +242,40 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       errorOutput += data.toString();
     });
 
-    // YUV buffer setup
-    const yPlaneSize = templateWidth * templateHeight;
-    const uvPlaneSize = (templateWidth / 2) * (templateHeight / 2);
+    // YUV buffer setup with adjusted dimensions
+    const yPlaneSize = adjustedWidth * adjustedHeight;
+    const uvPlaneSize = (adjustedWidth / 2) * (adjustedHeight / 2);
     const yuvBufferSize = yPlaneSize + uvPlaneSize * 2;
 
     // PRE-COMPUTE STATIC YUV PLANES (MAJOR OPTIMIZATION)
     const staticYUVBuffer = Buffer.alloc(yuvBufferSize);
     
-    // Draw template to output canvas once
-    outputCtx.clearRect(0, 0, templateWidth, templateHeight);
-    outputCtx.drawImage(templateImage, 0, 0);
+    // Draw template to output canvas once, centered with side extensions
+    outputCtx.clearRect(0, 0, adjustedWidth, adjustedHeight);
+    outputCtx.drawImage(
+      templateImage,
+      0, 0,
+      templateWidth, templateHeight,
+      sideExtension, topExtension,
+      templateWidth, templateHeight
+    );
     
     // Get RGBA buffer for template
     const templateRGBA = outputCanvas.toBuffer('raw');
     
-    // Top box constants (RGB 13, 22, 29)
-    const topboxWidth = 702;
-    const topboxHeight = 216;
-    const topboxX = (templateWidth - topboxWidth) / 2;
-    const topboxY = 0;
-    const topboxColor = rgbToYuvBT709(13, 22, 29);
-    
     // Pre-fill static YUV buffer (template only, no top box yet)
-    for (let y = 0; y < templateHeight; y++) {
-      for (let x = 0; x < templateWidth; x++) {
-        const rgbaIndex = (y * templateWidth + x) * 4;
+    for (let y = 0; y < adjustedHeight; y++) {
+      for (let x = 0; x < adjustedWidth; x++) {
+        const rgbaIndex = (y * adjustedWidth + x) * 4;
         const r = templateRGBA[rgbaIndex];
         const g = templateRGBA[rgbaIndex + 1];
         const b = templateRGBA[rgbaIndex + 2];
 
         const yuv = rgbToYuvBT709(r, g, b);
-        staticYUVBuffer[y * templateWidth + x] = yuv.y;
+        staticYUVBuffer[y * adjustedWidth + x] = yuv.y;
 
         if (y % 2 === 0 && x % 2 === 0) {
-          const uvIndex = (y / 2) * (templateWidth / 2) + (x / 2);
+          const uvIndex = (y / 2) * (adjustedWidth / 2) + (x / 2);
           staticYUVBuffer[yPlaneSize + uvIndex] = yuv.u;
           staticYUVBuffer[yPlaneSize + uvPlaneSize + uvIndex] = yuv.v;
         }
@@ -255,7 +294,7 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       workingCtx.drawImage(cachedWorkingCanvas, 0, 0);
 
       const currentSecond = i / fps;
-      const secondsLeft = Math.max(0, countdownStartSeconds - Math.floor(currentSecond)); // Clamped
+      const secondsLeft = Math.max(0, countdownStartSeconds - Math.floor(currentSecond));
       const minutes = Math.floor(secondsLeft / 60);
       const seconds = secondsLeft % 60;
 
@@ -366,110 +405,114 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       workingCtx.font = '18px "Circular", sans-serif';
       workingCtx.fillStyle = '#000';
       const countdownText = `Ticket expires in: 0h: ${minutes}m: ${seconds}s`;
-      workingCtx.fillText(countdownText, boxExtension + 83 + 285 / 2, 608 + 33 / 2);
+      workingCtx.fillText(countdownText, boxExtension + 83 + 285 / 2, countdownY + countdownHeight / 2);
 
       // Composite final frame
-      outputCtx.clearRect(0, 0, templateWidth, templateHeight);
-      outputCtx.drawImage(templateImage, 0, 0);
-      outputCtx.drawImage(workingCanvas, 0, 224);
+      outputCtx.clearRect(0, 0, adjustedWidth, adjustedHeight);
+      outputCtx.drawImage(
+        templateImage,
+        0, 0,
+        templateWidth, templateHeight,
+        sideExtension, topExtension,
+        templateWidth, templateHeight
+      );
+      outputCtx.drawImage(workingCanvas, sideExtension, 224 + topExtension);
 
       // OPTIMIZATION: Start with static buffer, only update animated region
       const yuvBuffer = Buffer.from(staticYUVBuffer);
       
       // Only convert the animated region (workingCanvas area)
       const rgbaBuffer = outputCanvas.toBuffer('raw');
-      const animatedStartY = 224;
-      const animatedEndY = 224 + workingHeight;
+      const animatedStartY = 224 + topExtension;
+      const animatedEndY = 224 + topExtension + workingHeight;
       
-      for (let y = animatedStartY; y < animatedEndY && y < templateHeight; y++) {
-        for (let x = 0; x < templateWidth; x++) {
-          const rgbaIndex = (y * templateWidth + x) * 4;
+      for (let y = animatedStartY; y < animatedEndY && y < adjustedHeight; y++) {
+        for (let x = 0; x < adjustedWidth; x++) {
+          const rgbaIndex = (y * adjustedWidth + x) * 4;
           const r = rgbaBuffer[rgbaIndex];
           const g = rgbaBuffer[rgbaIndex + 1];
           const b = rgbaBuffer[rgbaIndex + 2];
 
           const yuv = rgbToYuvBT709(r, g, b);
-          yuvBuffer[y * templateWidth + x] = yuv.y;
+          yuvBuffer[y * adjustedWidth + x] = yuv.y;
 
           if (y % 2 === 0 && x % 2 === 0) {
-            const uvIndex = (y / 2) * (templateWidth / 2) + (x / 2);
+            const uvIndex = (y / 2) * (adjustedWidth / 2) + (x / 2);
             yuvBuffer[yPlaneSize + uvIndex] = yuv.u;
             yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = yuv.v;
           }
         }
       }
 
-      ///////////////
-
-      // DARK FRAME WITH ROUNDED CARD CUTOUT (CORRECT)
-      const borderWidth = 100;
-      const topBorderExtra = 115;
-      const bottomBorderReduction = 20; // Reduce bottom border by 20px (card goes lower)
-      const cornerRadius = 15;
+      // DARK FRAME WITH ROUNDED CARD CUTOUT
+      const topBorderExtra = 115 + topExtension;
+      const bottomBorderReduction = 10 - bottomExtension;
       const borderColor = rgbToYuvBT709(13, 22, 29);
       const r2 = cornerRadius * cornerRadius;
 
       const cardX = borderWidth;
       const cardY = borderWidth + topBorderExtra;
-      const cardW = templateWidth  - borderWidth * 2;
-      const cardH = templateHeight - borderWidth * 2 - topBorderExtra + bottomBorderReduction;
+      const cardW = templateWidth - borderWidth * 2;
+      const cardH = adjustedHeight - borderWidth * 2 - topBorderExtra + bottomBorderReduction;
 
-      for (let y = 0; y < templateHeight; y++) {
-        for (let x = 0; x < templateWidth; x++) {
+      for (let y = 0; y < adjustedHeight; y++) {
+        for (let x = 0; x < adjustedWidth; x++) {
 
           let insideCard = false;
 
-          // ─── Central rectangle ───
+          // Adjust card bounds for side extension
+          const adjustedCardX = cardX + sideExtension;
+
+          // Central rectangle
           if (
-            x >= cardX + cornerRadius &&
-            x <  cardX + cardW - cornerRadius &&
+            x >= adjustedCardX + cornerRadius &&
+            x <  adjustedCardX + cardW - cornerRadius &&
             y >= cardY &&
             y <  cardY + cardH
           ) insideCard = true;
 
           if (
-            x >= cardX &&
-            x <  cardX + cardW &&
+            x >= adjustedCardX &&
+            x <  adjustedCardX + cardW &&
             y >= cardY + cornerRadius &&
             y <  cardY + cardH - cornerRadius
           ) insideCard = true;
 
-          // ─── Rounded corners ───
-
+          // Rounded corners
           // Top-left
-          if (x < cardX + cornerRadius && y < cardY + cornerRadius) {
-            const dx = x - (cardX + cornerRadius);
+          if (x < adjustedCardX + cornerRadius && y < cardY + cornerRadius) {
+            const dx = x - (adjustedCardX + cornerRadius);
             const dy = y - (cardY + cornerRadius);
             if (dx * dx + dy * dy <= r2) insideCard = true;
           }
 
           // Top-right
-          if (x >= cardX + cardW - cornerRadius && y < cardY + cornerRadius) {
-            const dx = x - (cardX + cardW - cornerRadius - 1);
+          if (x >= adjustedCardX + cardW - cornerRadius && y < cardY + cornerRadius) {
+            const dx = x - (adjustedCardX + cardW - cornerRadius - 1);
             const dy = y - (cardY + cornerRadius);
             if (dx * dx + dy * dy <= r2) insideCard = true;
           }
 
           // Bottom-left
-          if (x < cardX + cornerRadius && y >= cardY + cardH - cornerRadius) {
-            const dx = x - (cardX + cornerRadius);
+          if (x < adjustedCardX + cornerRadius && y >= cardY + cardH - cornerRadius) {
+            const dx = x - (adjustedCardX + cornerRadius);
             const dy = y - (cardY + cardH - cornerRadius - 1);
             if (dx * dx + dy * dy <= r2) insideCard = true;
           }
 
           // Bottom-right
-          if (x >= cardX + cardW - cornerRadius && y >= cardY + cardH - cornerRadius) {
-            const dx = x - (cardX + cardW - cornerRadius - 1);
+          if (x >= adjustedCardX + cardW - cornerRadius && y >= cardY + cardH - cornerRadius) {
+            const dx = x - (adjustedCardX + cardW - cornerRadius - 1);
             const dy = y - (cardY + cardH - cornerRadius - 1);
             if (dx * dx + dy * dy <= r2) insideCard = true;
           }
 
-          // ─── Paint everything OUTSIDE the card ───
+          // Paint everything OUTSIDE the card
           if (!insideCard) {
-            yuvBuffer[y * templateWidth + x] = borderColor.y;
+            yuvBuffer[y * adjustedWidth + x] = borderColor.y;
 
             if ((y & 1) === 0 && (x & 1) === 0) {
-              const uvIndex = (y >> 1) * (templateWidth >> 1) + (x >> 1);
+              const uvIndex = (y >> 1) * (adjustedWidth >> 1) + (x >> 1);
               yuvBuffer[yPlaneSize + uvIndex] = borderColor.u;
               yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = borderColor.v;
             }
@@ -477,7 +520,7 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
         }
       }
 
-      // ADD "Your ticket" text AFTER border is drawn
+      // ADD "Your ticket" text AFTER border is drawn - positioned 15px from bottom of top box
       const tempCanvas = createCanvas(124, 27);
       const tempCtx = tempCanvas.getContext('2d');
       tempCtx.fillStyle = '#FFF';
@@ -486,17 +529,20 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       tempCtx.textBaseline = 'middle';
       tempCtx.fillText('Your ticket', 62, 13.5);
       
-      // Convert temp canvas to YUV and apply to buffer
-      const textRGBA = tempCanvas.toBuffer('raw');
-      const textStartX = 289;  // Horizontally centered
-      const textStartY = 170;  // 15px into top border from card edge (moved up 5px)
+      // Position "Your ticket" 15px from the bottom of the top box (above the card)
+      const textWidth = 124;
+      const textHeight = 27;
+      const textStartX = Math.floor((adjustedWidth - textWidth) / 2);
+      const textStartY = cardY - yourTicketBottomMargin - textHeight;
       
-      for (let ty = 0; ty < 27; ty++) {
-        for (let tx = 0; tx < 124; tx++) {
-          const rgbaIndex = (ty * 124 + tx) * 4;
+      const textRGBA = tempCanvas.toBuffer('raw');
+      
+      for (let ty = 0; ty < textHeight; ty++) {
+        for (let tx = 0; tx < textWidth; tx++) {
+          const rgbaIndex = (ty * textWidth + tx) * 4;
           const alpha = textRGBA[rgbaIndex + 3];
           
-          if (alpha > 128) { // Only draw visible pixels
+          if (alpha > 128) {
             const r = textRGBA[rgbaIndex];
             const g = textRGBA[rgbaIndex + 1];
             const b = textRGBA[rgbaIndex + 2];
@@ -505,11 +551,11 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
             const finalY = textStartY + ty;
             const finalX = textStartX + tx;
             
-            if (finalY >= 0 && finalY < templateHeight && finalX >= 0 && finalX < templateWidth) {
-              yuvBuffer[finalY * templateWidth + finalX] = yuv.y;
+            if (finalY >= 0 && finalY < adjustedHeight && finalX >= 0 && finalX < adjustedWidth) {
+              yuvBuffer[finalY * adjustedWidth + finalX] = yuv.y;
               
               if ((finalY & 1) === 0 && (finalX & 1) === 0) {
-                const uvIndex = (finalY >> 1) * (templateWidth >> 1) + (finalX >> 1);
+                const uvIndex = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
                 yuvBuffer[yPlaneSize + uvIndex] = yuv.u;
                 yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = yuv.v;
               }
@@ -517,8 +563,6 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
           }
         }
       }
-
-      //////////////
 
       // BACKPRESSURE HANDLING
       if (!ffmpegProcess.stdin.write(yuvBuffer)) {

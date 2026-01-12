@@ -2,4 +2,4 @@ Increase video quality
 Reduce generation time
 Find siginificance of 'random' word
 Changing colour of box & circles
-Progress bar
+Add cooldown
