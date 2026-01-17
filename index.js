@@ -10,56 +10,43 @@ const { once } = require('events');
 const app = express();
 const port = 80;
 
-// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static videos
 app.use('/videos', express.static(path.join(__dirname, 'videos')));
 
-// Job status tracking
 const jobStatus = new Map();
 
-// ---------------------------
-// SIZE & LAYOUT CONFIGURATION
-// ---------------------------
 const SIZE_CONFIG = {
-  // Canvas dimensions
   originalWidth: 452,
   workingWidth: 702,
   workingHeight: 836,
-  
-  // Canvas adjustments
-  topExtension: 50,  // Changed from topReduction: 0
+  topExtension: 50,
   bottomExtension: 200,
   sideExtension: 200,
-  
-  // Border configuration
   borderWidth: 100,
   cornerRadius: 15,
-  
-  // Box configuration
   boxExtension: 125,
   baseBoxY: 496,
   boxHeight: 83,
-  
-  // Animation area
   circleAreaWidth: 352,
-  
-  // Text positioning
-  titleY: 376,
+  titleY: 363,
   titleHeight: 66,
-  validY: 448,
+  validY: 440,
   validHeight: 33,
   countdownY: 608,
   countdownHeight: 33,
-
-  yourTicketBottomMargin: 15  // Changed from yourTicketInsetFromCardTop
+  yourTicketBottomMargin: 20,
+  greyBoxX: 148,
+  greyBoxY: 904,
+  greyBoxW: 405,
+  greyBoxH: 33,
+  greyBoxRadius: 17,
+  ticketCodeX: 148,
+  ticketCodeY: 907,
+  ticketCodeW: 405,
+  ticketCodeH: 28
 };
 
-// ---------------------------
-// FONT REGISTRATION
-// ---------------------------
 const fontPath = path.join(__dirname, 'fonts', 'lineto-circular-medium.ttf');
 if (fs.existsSync(fontPath)) {
   registerFont(fontPath, { family: 'Circular' });
@@ -69,16 +56,10 @@ if (fs.existsSync(fontPath)) {
   process.exit(1);
 }
 
-// ---------------------------
-// COLOR SPACE CONVERSION (BT.709)
-// ---------------------------
-// BT.709 RGB → YUV conversion (limited range)
 function rgbToYuvBT709(r, g, b) {
   const y = Math.round(16 + (0.2126 * r + 0.7152 * g + 0.0722 * b) * 219 / 255);
   const u = Math.round(128 + (-0.1146 * r - 0.3854 * g + 0.5 * b) * 224 / 255);
   const v = Math.round(128 + (0.5 * r - 0.4542 * g - 0.0458 * b) * 224 / 255);
-  
-  // Clamp to valid ranges
   return {
     y: Math.max(16, Math.min(235, y)),
     u: Math.max(16, Math.min(240, u)),
@@ -86,91 +67,58 @@ function rgbToYuvBT709(r, g, b) {
   };
 }
 
-// ---------------------------
-// SEEDED RANDOM NUMBER GENERATOR
-// ---------------------------
 class SeededRandom {
-  constructor(seed) {
-    this.seed = seed;
-  }
-  
+  constructor(seed) { this.seed = seed; }
   next() {
     this.seed = (this.seed * 9301 + 49297) % 233280;
     return this.seed / 233280;
   }
 }
 
-// ---------------------------
-// VIDEO GENERATION FUNCTION (OPTIMIZED)
-// ---------------------------
 async function generateVideo(routeText, videoId, expectedTime, callback) {
-  const { 
-    originalWidth, workingWidth, workingHeight, boxExtension, 
-    topExtension, bottomExtension, sideExtension, baseBoxY, boxHeight, circleAreaWidth,
-    borderWidth, cornerRadius, yourTicketBottomMargin,
-    titleY, titleHeight, validY, validHeight, countdownY, countdownHeight
+  const { originalWidth, workingWidth, workingHeight, boxExtension, topExtension, bottomExtension, sideExtension,
+    baseBoxY, boxHeight, circleAreaWidth, borderWidth, cornerRadius, yourTicketBottomMargin,
+    titleY, titleHeight, validY, validHeight, countdownY, countdownHeight,
+    greyBoxX, greyBoxY, greyBoxW, greyBoxH, greyBoxRadius, ticketCodeX, ticketCodeY, ticketCodeW, ticketCodeH
   } = SIZE_CONFIG;
   
   const workingCanvas = createCanvas(workingWidth, workingHeight);
   const workingCtx = workingCanvas.getContext('2d');
+  const fps = 30, videoDurationSeconds = 30, totalFrames = videoDurationSeconds * fps;
+  const countdownStartSeconds = 57 * 60 + 59, animationAmplitude = 12, animationSpeed = 0.08;
 
-  const fps = 30;
-  const videoDurationSeconds = 30;
-  const totalFrames = videoDurationSeconds * fps;
+  const randomWords = ['Adventure', 'Beautiful', 'Courage', 'Destiny', 'Elegant', 'Freedom', 'Gratitude',
+    'Harmony', 'Inspire', 'Journey', 'Knowledge', 'Liberty', 'Majestic', 'Noble', 'Opportunity', 'Passion',
+    'Quality', 'Resilience', 'Serenity', 'Triumph', 'Unity', 'Victory', 'Wisdom', 'Zenith', 'Abundance',
+    'Blissful', 'Captivate', 'Delightful', 'Energetic', 'Flourish', 'Graceful', 'Hopeful', 'Illuminate',
+    'Joyful', 'Kindness', 'Laughter', 'Magnificent', 'Nurture', 'Optimism', 'Peaceful', 'Radiant',
+    'Strength', 'Tranquil', 'Vibrant', 'Wonderful'];
 
-  const countdownStartSeconds = 57 * 60 + 59;
-  const animationAmplitude = 12;
-  const animationSpeed = 0.08;
-
-  const randomWords = [
-    'Adventure', 'Beautiful', 'Courage', 'Destiny', 'Elegant', 'Freedom', 'Gratitude',
-    'Harmony', 'Inspire', 'Journey', 'Knowledge', 'Liberty', 'Majestic', 'Noble',
-    'Opportunity', 'Passion', 'Quality', 'Resilience', 'Serenity', 'Triumph',
-    'Unity', 'Victory', 'Wisdom', 'Zenith', 'Abundance', 'Blissful', 'Captivate',
-    'Delightful', 'Energetic', 'Flourish', 'Graceful', 'Hopeful', 'Illuminate',
-    'Joyful', 'Kindness', 'Laughter', 'Magnificent', 'Nurture', 'Optimism',
-    'Peaceful', 'Radiant', 'Strength', 'Tranquil', 'Vibrant', 'Wonderful'
-  ];
-
-  // Use seeded random for reproducibility
   const rng = new SeededRandom(videoId.split('').reduce((a, b) => a + b.charCodeAt(0), 0));
   const selectedWord = randomWords[Math.floor(rng.next() * randomWords.length)];
   const generationStartTime = new Date();
 
-  const circles = [];
-  const numCircles = 10;
-  const circleAreaStart = (workingWidth - circleAreaWidth) / 2;
-
+  const circles = [], numCircles = 10, circleAreaStart = (workingWidth - circleAreaWidth) / 2;
   for (let i = 0; i < numCircles; i++) {
     circles.push({
-      x: circleAreaStart + rng.next() * circleAreaWidth,
-      y: baseBoxY + rng.next() * boxHeight,
-      radius: 10 + rng.next() * 30,
-      vx: (rng.next() - 0.5) * 3,
-      vy: (rng.next() - 0.5) * 3,
+      x: circleAreaStart + rng.next() * circleAreaWidth, y: baseBoxY + rng.next() * boxHeight,
+      radius: 10 + rng.next() * 30, vx: (rng.next() - 0.5) * 3, vy: (rng.next() - 0.5) * 3,
       alpha: 0.1 + rng.next() * 0.15
     });
   }
 
   function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
-    const words = text.split(' ');
+    const words = text.split(' '), lines = [];
     let line = '';
-    const lines = [];
-
     for (let n = 0; n < words.length; n++) {
       const testLine = line + words[n] + ' ';
       if (ctx.measureText(testLine).width > maxWidth && n > 0) {
         lines.push(line);
         line = words[n] + ' ';
-      } else {
-        line = testLine;
-      }
+      } else line = testLine;
     }
     lines.push(line);
-
-    const totalHeight = lines.length * lineHeight;
-    let yPos = y - (totalHeight / 2) + (lineHeight / 2);
-    
+    let yPos = y - (lines.length * lineHeight / 2) + (lineHeight / 2);
     lines.forEach(lineText => {
       ctx.fillText(lineText.trim(), x, yPos);
       yPos += lineHeight;
@@ -179,17 +127,13 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
 
   try {
     const templateImage = await loadImage(path.join(__dirname, 'template.png'));
-    const templateWidth = templateImage.width;
-    const templateHeight = templateImage.height;
-    
-    // Calculate adjusted output dimensions
+    const templateWidth = templateImage.width, templateHeight = templateImage.height;
     const adjustedHeight = templateHeight + topExtension + bottomExtension;
     const adjustedWidth = templateWidth + (sideExtension * 2);
     
     const outputCanvas = createCanvas(adjustedWidth, adjustedHeight);
     const outputCtx = outputCanvas.getContext('2d');
     
-    // Pre-render static elements to cache canvas
     const cachedWorkingCanvas = createCanvas(workingWidth, workingHeight);
     const cachedWorkingCtx = cachedWorkingCanvas.getContext('2d');
     
@@ -208,72 +152,35 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
     const validText = `Valid from: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}, ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
     cachedWorkingCtx.fillText(validText, boxExtension + originalWidth / 2, validY + validHeight / 2);
 
-    // Setup FFmpeg with proper color metadata
     const videosDir = path.join(__dirname, 'videos');
-    if (!fs.existsSync(videosDir)) {
-      fs.mkdirSync(videosDir);
-    }
+    if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir);
     const outputPath = path.join(videosDir, `${videoId}.mp4`);
 
-    const args = [
-      '-y',
-      '-f', 'rawvideo',
-      '-pix_fmt', 'yuv420p',
-      '-colorspace', 'bt709',
-      '-color_range', 'tv',
-      '-s', `${adjustedWidth}x${adjustedHeight}`,
-      '-framerate', String(fps),
-      '-i', '-',
-      '-c:v', 'libx264',
-      '-profile:v', 'high',
-      '-level', '4.1',
-      '-pix_fmt', 'yuv420p',
-      '-colorspace', 'bt709',
-      '-color_range', 'tv',
-      '-movflags', '+faststart',
-      '-preset', 'ultrafast',
-      outputPath
-    ];
-
-    const ffmpegProcess = spawn(ffmpegPath, args);
+    const ffmpegProcess = spawn(ffmpegPath, [
+      '-y', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_range', 'tv',
+      '-s', `${adjustedWidth}x${adjustedHeight}`, '-framerate', String(fps), '-i', '-',
+      '-c:v', 'libx264', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+      '-colorspace', 'bt709', '-color_range', 'tv', '-movflags', '+faststart', '-preset', 'ultrafast', outputPath
+    ]);
     
     let errorOutput = '';
-    ffmpegProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
+    ffmpegProcess.stderr.on('data', (data) => { errorOutput += data.toString(); });
 
-    // YUV buffer setup with adjusted dimensions
     const yPlaneSize = adjustedWidth * adjustedHeight;
     const uvPlaneSize = (adjustedWidth / 2) * (adjustedHeight / 2);
     const yuvBufferSize = yPlaneSize + uvPlaneSize * 2;
-
-    // PRE-COMPUTE STATIC YUV PLANES (MAJOR OPTIMIZATION)
     const staticYUVBuffer = Buffer.alloc(yuvBufferSize);
     
-    // Draw template to output canvas once, centered with side extensions
     outputCtx.clearRect(0, 0, adjustedWidth, adjustedHeight);
-    outputCtx.drawImage(
-      templateImage,
-      0, 0,
-      templateWidth, templateHeight,
-      sideExtension, topExtension,
-      templateWidth, templateHeight
-    );
+    outputCtx.drawImage(templateImage, 0, 0, templateWidth, templateHeight, sideExtension, topExtension, templateWidth, templateHeight);
     
-    // Get RGBA buffer for template
     const templateRGBA = outputCanvas.toBuffer('raw');
     
-    // Pre-fill static YUV buffer (template only, no top box yet)
     for (let y = 0; y < adjustedHeight; y++) {
       for (let x = 0; x < adjustedWidth; x++) {
         const rgbaIndex = (y * adjustedWidth + x) * 4;
-        const r = templateRGBA[rgbaIndex];
-        const g = templateRGBA[rgbaIndex + 1];
-        const b = templateRGBA[rgbaIndex + 2];
-
-        const yuv = rgbToYuvBT709(r, g, b);
+        const yuv = rgbToYuvBT709(templateRGBA[rgbaIndex], templateRGBA[rgbaIndex + 1], templateRGBA[rgbaIndex + 2]);
         staticYUVBuffer[y * adjustedWidth + x] = yuv.y;
-
         if (y % 2 === 0 && x % 2 === 0) {
           const uvIndex = (y / 2) * (adjustedWidth / 2) + (x / 2);
           staticYUVBuffer[yPlaneSize + uvIndex] = yuv.u;
@@ -284,39 +191,25 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
 
     let frameCount = 0;
     const startTime = Date.now();
-
-    // Update job status
     jobStatus.set(videoId, { status: 'processing', progress: 0 });
 
-    // Frame generation loop
     for (let i = 0; i < totalFrames; i++) {
       workingCtx.clearRect(0, 0, workingWidth, workingHeight);
       workingCtx.drawImage(cachedWorkingCanvas, 0, 0);
 
       const currentSecond = i / fps;
       const secondsLeft = Math.max(0, countdownStartSeconds - Math.floor(currentSecond));
-      const minutes = Math.floor(secondsLeft / 60);
-      const seconds = secondsLeft % 60;
+      const minutes = Math.floor(secondsLeft / 60), seconds = secondsLeft % 60;
 
       const estimatedTime = new Date(generationStartTime.getTime() + (currentSecond * 1000));
-      const estimatedHours = String(estimatedTime.getHours()).padStart(2, '0');
-      const estimatedMinutes = String(estimatedTime.getMinutes()).padStart(2, '0');
-      const estimatedTimeString = expectedTime || `${estimatedHours}:${estimatedMinutes}`;
+      const estimatedTimeString = expectedTime || `${String(estimatedTime.getHours()).padStart(2, '0')}:${String(estimatedTime.getMinutes()).padStart(2, '0')}`;
 
-      const t = currentSecond;
-      const cycleDuration = 1 / animationSpeed;
-      const halfCycle = cycleDuration / 2;
+      const cycleDuration = 1 / animationSpeed, halfCycle = cycleDuration / 2;
+      const cyclePosition = currentSecond % cycleDuration;
+      let tlPull = 0, trPull = 0;
       
-      let tlPull = 0;
-      let trPull = 0;
-      
-      const cyclePosition = t % cycleDuration;
-      
-      if (cyclePosition < halfCycle) {
-        tlPull = Math.sin((cyclePosition / halfCycle) * Math.PI) * animationAmplitude;
-      } else {
-        trPull = Math.sin(((cyclePosition - halfCycle) / halfCycle) * Math.PI) * animationAmplitude;
-      }
+      if (cyclePosition < halfCycle) tlPull = Math.sin((cyclePosition / halfCycle) * Math.PI) * animationAmplitude;
+      else trPull = Math.sin(((cyclePosition - halfCycle) / halfCycle) * Math.PI) * animationAmplitude;
 
       const avgTopY = baseBoxY + (tlPull + trPull) / 2;
 
@@ -324,7 +217,6 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       workingCtx.shadowBlur = 10;
       workingCtx.shadowOffsetX = 0;
       workingCtx.shadowOffsetY = 4;
-
       workingCtx.fillStyle = '#D9D9D9';
       workingCtx.beginPath();
       workingCtx.moveTo(0, baseBoxY + tlPull);
@@ -340,7 +232,6 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       workingCtx.shadowOffsetY = 0;
 
       workingCtx.save();
-      
       workingCtx.beginPath();
       workingCtx.moveTo(circleAreaStart, baseBoxY + tlPull);
       workingCtx.lineTo(circleAreaStart + circleAreaWidth, baseBoxY + trPull);
@@ -352,51 +243,34 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       circles.forEach(circle => {
         circle.x += circle.vx;
         circle.y += circle.vy;
-
         if (circle.x < circleAreaStart - circle.radius) circle.x = circleAreaStart + circleAreaWidth + circle.radius;
         if (circle.x > circleAreaStart + circleAreaWidth + circle.radius) circle.x = circleAreaStart - circle.radius;
-
         if (circle.y < baseBoxY - circle.radius) circle.y = baseBoxY + boxHeight + circle.radius;
         if (circle.y > baseBoxY + boxHeight + circle.radius) circle.y = baseBoxY - circle.radius;
-      });
-
-      circles.forEach(circle => {
         workingCtx.fillStyle = `rgba(100, 100, 100, ${circle.alpha})`;
         workingCtx.beginPath();
         workingCtx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
         workingCtx.fill();
       });
-
       workingCtx.restore();
 
-      const switchCycle = 2;
-      const cycleTime = currentSecond % (switchCycle * 2);
-      const fadeDuration = 0.3;
-      
-      let textToShow;
-      let textOpacity = 1;
+      const switchCycle = 2, cycleTime = currentSecond % (switchCycle * 2), fadeDuration = 0.3;
+      let textToShow, textOpacity = 1;
       
       if (cycleTime < switchCycle) {
         textToShow = selectedWord;
-        if (cycleTime > switchCycle - fadeDuration) {
-          textOpacity = (switchCycle - cycleTime) / fadeDuration;
-        }
+        if (cycleTime > switchCycle - fadeDuration) textOpacity = (switchCycle - cycleTime) / fadeDuration;
       } else {
         textToShow = estimatedTimeString;
-        if (cycleTime < switchCycle + fadeDuration) {
-          textOpacity = (cycleTime - switchCycle) / fadeDuration;
-        }
-        if (cycleTime > (switchCycle * 2) - fadeDuration) {
-          textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
-        }
+        if (cycleTime < switchCycle + fadeDuration) textOpacity = (cycleTime - switchCycle) / fadeDuration;
+        if (cycleTime > (switchCycle * 2) - fadeDuration) textOpacity = ((switchCycle * 2) - cycleTime) / fadeDuration;
       }
 
       workingCtx.font = '40px "Circular", sans-serif';
+      workingCtx.fillStyle = `rgba(0, 0, 0, ${textOpacity})`;
       workingCtx.textAlign = 'center';
       workingCtx.textBaseline = 'middle';
-      workingCtx.fillStyle = `rgba(0, 0, 0, ${textOpacity})`;
-      
-      const wordCenterX = boxExtension + originalWidth / 2;
+      const wordCenterX = workingWidth / 2;
       const textRelativeY = 63 / 2;
       const wordCenterY = avgTopY + 10 + textRelativeY;
       const wordMaxWidth = originalWidth - 102;
@@ -404,123 +278,69 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
 
       workingCtx.font = '18px "Circular", sans-serif';
       workingCtx.fillStyle = '#000';
+      workingCtx.textAlign = 'center';
       const countdownText = `Ticket expires in: 0h: ${minutes}m: ${seconds}s`;
-      workingCtx.fillText(countdownText, boxExtension + 83 + 285 / 2, countdownY + countdownHeight / 2);
+      workingCtx.fillText(countdownText, workingWidth / 2, countdownY + countdownHeight / 2);
 
-      // Composite final frame
       outputCtx.clearRect(0, 0, adjustedWidth, adjustedHeight);
-      outputCtx.drawImage(
-        templateImage,
-        0, 0,
-        templateWidth, templateHeight,
-        sideExtension, topExtension,
-        templateWidth, templateHeight
-      );
+      outputCtx.drawImage(templateImage, 0, 0, templateWidth, templateHeight, sideExtension, topExtension, templateWidth, templateHeight);
       outputCtx.drawImage(workingCanvas, sideExtension, 224 + topExtension);
 
-      // OPTIMIZATION: Start with static buffer, only update animated region
       const yuvBuffer = Buffer.from(staticYUVBuffer);
-      
-      // Only convert the animated region (workingCanvas area)
       const rgbaBuffer = outputCanvas.toBuffer('raw');
-      const animatedStartY = 224 + topExtension;
-      const animatedEndY = 224 + topExtension + workingHeight;
+      const animatedStartY = 224 + topExtension, animatedEndY = 224 + topExtension + workingHeight;
       
       for (let y = animatedStartY; y < animatedEndY && y < adjustedHeight; y++) {
         for (let x = 0; x < adjustedWidth; x++) {
-          const rgbaIndex = (y * adjustedWidth + x) * 4;
-          const r = rgbaBuffer[rgbaIndex];
-          const g = rgbaBuffer[rgbaIndex + 1];
-          const b = rgbaBuffer[rgbaIndex + 2];
-
-          const yuv = rgbToYuvBT709(r, g, b);
+          const i = (y * adjustedWidth + x) * 4;
+          const yuv = rgbToYuvBT709(rgbaBuffer[i], rgbaBuffer[i+1], rgbaBuffer[i+2]);
           yuvBuffer[y * adjustedWidth + x] = yuv.y;
-
           if (y % 2 === 0 && x % 2 === 0) {
-            const uvIndex = (y / 2) * (adjustedWidth / 2) + (x / 2);
-            yuvBuffer[yPlaneSize + uvIndex] = yuv.u;
-            yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = yuv.v;
+            const uvIdx = (y / 2) * (adjustedWidth / 2) + (x / 2);
+            yuvBuffer[yPlaneSize + uvIdx] = yuv.u;
+            yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = yuv.v;
           }
         }
       }
 
-      // DARK FRAME WITH ROUNDED CARD CUTOUT
-      const topBorderExtra = 115 + topExtension;
-      const bottomBorderReduction = 10 - bottomExtension;
-      const borderColor = rgbToYuvBT709(13, 22, 29);
+      const topBorderExtra = 115 + topExtension, bottomBorderReduction = 10 - bottomExtension;
+      const borderColor = rgbToYuvBT709(19, 32, 42);
       const r2 = cornerRadius * cornerRadius;
-
-      const cardX = borderWidth;
-      const cardY = borderWidth + topBorderExtra;
-      const cardW = templateWidth - borderWidth * 2;
-      const cardH = adjustedHeight - borderWidth * 2 - topBorderExtra + bottomBorderReduction;
+      const cardX = borderWidth, cardY = borderWidth + topBorderExtra;
+      const cardW = templateWidth - borderWidth * 2, cardH = adjustedHeight - borderWidth * 2 - topBorderExtra + bottomBorderReduction;
 
       for (let y = 0; y < adjustedHeight; y++) {
         for (let x = 0; x < adjustedWidth; x++) {
-
           let insideCard = false;
-
-          // Adjust card bounds for side extension
           const adjustedCardX = cardX + sideExtension;
 
-          // Central rectangle
-          if (
-            x >= adjustedCardX + cornerRadius &&
-            x <  adjustedCardX + cardW - cornerRadius &&
-            y >= cardY &&
-            y <  cardY + cardH
-          ) insideCard = true;
+          if (x >= adjustedCardX + cornerRadius && x < adjustedCardX + cardW - cornerRadius && y >= cardY && y < cardY + cardH) insideCard = true;
+          if (x >= adjustedCardX && x < adjustedCardX + cardW && y >= cardY + cornerRadius && y < cardY + cardH - cornerRadius) insideCard = true;
 
-          if (
-            x >= adjustedCardX &&
-            x <  adjustedCardX + cardW &&
-            y >= cardY + cornerRadius &&
-            y <  cardY + cardH - cornerRadius
-          ) insideCard = true;
-
-          // Rounded corners
-          // Top-left
           if (x < adjustedCardX + cornerRadius && y < cardY + cornerRadius) {
-            const dx = x - (adjustedCardX + cornerRadius);
-            const dy = y - (cardY + cornerRadius);
-            if (dx * dx + dy * dy <= r2) insideCard = true;
+            if ((x - (adjustedCardX + cornerRadius)) ** 2 + (y - (cardY + cornerRadius)) ** 2 <= r2) insideCard = true;
           }
-
-          // Top-right
           if (x >= adjustedCardX + cardW - cornerRadius && y < cardY + cornerRadius) {
-            const dx = x - (adjustedCardX + cardW - cornerRadius - 1);
-            const dy = y - (cardY + cornerRadius);
-            if (dx * dx + dy * dy <= r2) insideCard = true;
+            if ((x - (adjustedCardX + cardW - cornerRadius - 1)) ** 2 + (y - (cardY + cornerRadius)) ** 2 <= r2) insideCard = true;
           }
-
-          // Bottom-left
           if (x < adjustedCardX + cornerRadius && y >= cardY + cardH - cornerRadius) {
-            const dx = x - (adjustedCardX + cornerRadius);
-            const dy = y - (cardY + cardH - cornerRadius - 1);
-            if (dx * dx + dy * dy <= r2) insideCard = true;
+            if ((x - (adjustedCardX + cornerRadius)) ** 2 + (y - (cardY + cardH - cornerRadius - 1)) ** 2 <= r2) insideCard = true;
           }
-
-          // Bottom-right
           if (x >= adjustedCardX + cardW - cornerRadius && y >= cardY + cardH - cornerRadius) {
-            const dx = x - (adjustedCardX + cardW - cornerRadius - 1);
-            const dy = y - (cardY + cardH - cornerRadius - 1);
-            if (dx * dx + dy * dy <= r2) insideCard = true;
+            if ((x - (adjustedCardX + cardW - cornerRadius - 1)) ** 2 + (y - (cardY + cardH - cornerRadius - 1)) ** 2 <= r2) insideCard = true;
           }
 
-          // Paint everything OUTSIDE the card
           if (!insideCard) {
             yuvBuffer[y * adjustedWidth + x] = borderColor.y;
-
             if ((y & 1) === 0 && (x & 1) === 0) {
-              const uvIndex = (y >> 1) * (adjustedWidth >> 1) + (x >> 1);
-              yuvBuffer[yPlaneSize + uvIndex] = borderColor.u;
-              yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = borderColor.v;
+              const uvIdx = (y >> 1) * (adjustedWidth >> 1) + (x >> 1);
+              yuvBuffer[yPlaneSize + uvIdx] = borderColor.u;
+              yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = borderColor.v;
             }
           }
         }
       }
 
-      // ADD "Your ticket" text AFTER border is drawn - positioned 15px from bottom of top box
       const tempCanvas = createCanvas(124, 27);
       const tempCtx = tempCanvas.getContext('2d');
       tempCtx.fillStyle = '#FFF';
@@ -529,66 +349,247 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
       tempCtx.textBaseline = 'middle';
       tempCtx.fillText('Your ticket', 62, 13.5);
       
-      // Position "Your ticket" 15px from the bottom of the top box (above the card)
-      const textWidth = 124;
-      const textHeight = 27;
+      const textWidth = 124, textHeight = 27;
       const textStartX = Math.floor((adjustedWidth - textWidth) / 2);
       const textStartY = cardY - yourTicketBottomMargin - textHeight;
-      
       const textRGBA = tempCanvas.toBuffer('raw');
       
       for (let ty = 0; ty < textHeight; ty++) {
         for (let tx = 0; tx < textWidth; tx++) {
-          const rgbaIndex = (ty * textWidth + tx) * 4;
-          const alpha = textRGBA[rgbaIndex + 3];
-          
-          if (alpha > 128) {
-            const r = textRGBA[rgbaIndex];
-            const g = textRGBA[rgbaIndex + 1];
-            const b = textRGBA[rgbaIndex + 2];
-            
-            const yuv = rgbToYuvBT709(r, g, b);
-            const finalY = textStartY + ty;
-            const finalX = textStartX + tx;
-            
+          if (textRGBA[(ty * textWidth + tx) * 4 + 3] > 128) {
+            const i = (ty * textWidth + tx) * 4;
+            const yuv = rgbToYuvBT709(textRGBA[i], textRGBA[i+1], textRGBA[i+2]);
+            const finalY = textStartY + ty, finalX = textStartX + tx;
             if (finalY >= 0 && finalY < adjustedHeight && finalX >= 0 && finalX < adjustedWidth) {
               yuvBuffer[finalY * adjustedWidth + finalX] = yuv.y;
-              
               if ((finalY & 1) === 0 && (finalX & 1) === 0) {
-                const uvIndex = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
-                yuvBuffer[yPlaneSize + uvIndex] = yuv.u;
-                yuvBuffer[yPlaneSize + uvPlaneSize + uvIndex] = yuv.v;
+                const uvIdx = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
+                yuvBuffer[yPlaneSize + uvIdx] = yuv.u;
+                yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = yuv.v;
               }
             }
           }
         }
       }
 
-      // BACKPRESSURE HANDLING
-      if (!ffmpegProcess.stdin.write(yuvBuffer)) {
-        await once(ffmpegProcess.stdin, 'drain');
+      // ADD GREY BOX WITH TICKET CODE
+      const greyBoxRealX = greyBoxX + sideExtension;
+      const greyBoxRealY = greyBoxY + topExtension;
+      const r2Grey = greyBoxRadius * greyBoxRadius;
+      const greyBoxColor = rgbToYuvBT709(233, 219, 219);
+
+      for (let y = greyBoxRealY; y < greyBoxRealY + greyBoxH && y < adjustedHeight; y++) {
+        for (let x = greyBoxRealX; x < greyBoxRealX + greyBoxW && x < adjustedWidth; x++) {
+          let insideBox = false;
+
+          if (x >= greyBoxRealX + greyBoxRadius && x < greyBoxRealX + greyBoxW - greyBoxRadius &&
+              y >= greyBoxRealY && y < greyBoxRealY + greyBoxH) insideBox = true;
+          if (x >= greyBoxRealX && x < greyBoxRealX + greyBoxW &&
+              y >= greyBoxRealY + greyBoxRadius && y < greyBoxRealY + greyBoxH - greyBoxRadius) insideBox = true;
+
+          if (x < greyBoxRealX + greyBoxRadius && y < greyBoxRealY + greyBoxRadius) {
+            if ((x - (greyBoxRealX + greyBoxRadius)) ** 2 + (y - (greyBoxRealY + greyBoxRadius)) ** 2 <= r2Grey) insideBox = true;
+          }
+          if (x >= greyBoxRealX + greyBoxW - greyBoxRadius && y < greyBoxRealY + greyBoxRadius) {
+            if ((x - (greyBoxRealX + greyBoxW - greyBoxRadius - 1)) ** 2 + (y - (greyBoxRealY + greyBoxRadius)) ** 2 <= r2Grey) insideBox = true;
+          }
+          if (x < greyBoxRealX + greyBoxRadius && y >= greyBoxRealY + greyBoxH - greyBoxRadius) {
+            if ((x - (greyBoxRealX + greyBoxRadius)) ** 2 + (y - (greyBoxRealY + greyBoxH - greyBoxRadius - 1)) ** 2 <= r2Grey) insideBox = true;
+          }
+          if (x >= greyBoxRealX + greyBoxW - greyBoxRadius && y >= greyBoxRealY + greyBoxH - greyBoxRadius) {
+            if ((x - (greyBoxRealX + greyBoxW - greyBoxRadius - 1)) ** 2 + (y - (greyBoxRealY + greyBoxH - greyBoxRadius - 1)) ** 2 <= r2Grey) insideBox = true;
+          }
+
+          if (insideBox) {
+            yuvBuffer[y * adjustedWidth + x] = greyBoxColor.y;
+            if ((y & 1) === 0 && (x & 1) === 0) {
+              const uvIdx = (y >> 1) * (adjustedWidth >> 1) + (x >> 1);
+              yuvBuffer[yPlaneSize + uvIdx] = greyBoxColor.u;
+              yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = greyBoxColor.v;
+            }
+          }
+        }
       }
 
-      frameCount++;
+      const ticketCodeCanvas = createCanvas(ticketCodeW, ticketCodeH);
+      const ticketCodeCtx = ticketCodeCanvas.getContext('2d');
+      ticketCodeCtx.fillStyle = '#000';
+      ticketCodeCtx.font = '13px "Circular", sans-serif';
+      ticketCodeCtx.textAlign = 'center';
+      ticketCodeCtx.textBaseline = 'middle';
+      ticketCodeCtx.fillText('48291-2026010716553485256833-bgfHT', ticketCodeW / 2, ticketCodeH / 2);
       
-      // Update progress
-      const progress = Math.round((frameCount / totalFrames) * 100);
-      jobStatus.set(videoId, { status: 'processing', progress });
+      const ticketCodeRealX = ticketCodeX + sideExtension;
+      const ticketCodeRealY = ticketCodeY + topExtension;
+      const ticketCodeRGBA = ticketCodeCanvas.toBuffer('raw');
+      
+      for (let ty = 0; ty < ticketCodeH; ty++) {
+        for (let tx = 0; tx < ticketCodeW; tx++) {
+          if (ticketCodeRGBA[(ty * ticketCodeW + tx) * 4 + 3] > 128) {
+            const i = (ty * ticketCodeW + tx) * 4;
+            const yuv = rgbToYuvBT709(ticketCodeRGBA[i], ticketCodeRGBA[i+1], ticketCodeRGBA[i+2]);
+            const finalY = ticketCodeRealY + ty, finalX = ticketCodeRealX + tx;
+            if (finalY >= 0 && finalY < adjustedHeight && finalX >= 0 && finalX < adjustedWidth) {
+              yuvBuffer[finalY * adjustedWidth + finalX] = yuv.y;
+              if ((finalY & 1) === 0 && (finalX & 1) === 0) {
+                const uvIdx = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
+                yuvBuffer[yPlaneSize + uvIdx] = yuv.u;
+                yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = yuv.v;
+              }
+            }
+          }
+        }
+      }
+
+      // ADD "MORE DETAILS >" TEXT BOX
+      const moreDetailsCanvas = createCanvas(119, 33);
+      const moreDetailsCtx = moreDetailsCanvas.getContext('2d');
+      moreDetailsCtx.fillStyle = 'rgb(42, 124, 74)';
+      moreDetailsCtx.font = '13px "Circular", sans-serif';
+      moreDetailsCtx.textAlign = 'center';
+      moreDetailsCtx.textBaseline = 'middle';
+      moreDetailsCtx.fillText('More details >', 119 / 2, 33 / 2);
+
+      const moreDetailsW = 119, moreDetailsH = 33;
+      const moreDetailsRealX = 291 + sideExtension;
+      const moreDetailsRealY = 976 + topExtension;
+      const moreDetailsRGBA = moreDetailsCanvas.toBuffer('raw');
+      const moreDetailsColor = rgbToYuvBT709(42, 124, 74);
+
+      for (let ty = 0; ty < moreDetailsH; ty++) {
+        for (let tx = 0; tx < moreDetailsW; tx++) {
+          if (moreDetailsRGBA[(ty * moreDetailsW + tx) * 4 + 3] > 128) {
+            const i = (ty * moreDetailsW + tx) * 4;
+            const yuv = rgbToYuvBT709(moreDetailsRGBA[i], moreDetailsRGBA[i+1], moreDetailsRGBA[i+2]);
+            const finalY = moreDetailsRealY + ty, finalX = moreDetailsRealX + tx;
+            if (finalY >= 0 && finalY < adjustedHeight && finalX >= 0 && finalX < adjustedWidth) {
+              yuvBuffer[finalY * adjustedWidth + finalX] = yuv.y;
+              if ((finalY & 1) === 0 && (finalX & 1) === 0) {
+                const uvIdx = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
+                yuvBuffer[yPlaneSize + uvIdx] = yuv.u;
+                yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = yuv.v;
+              }
+            }
+          }
+        }
+      }
+
+      ////////
+
+        // ADD DARK BOX WITH PRICING TEXT (CLIPPED TO CARD BOUNDARY)
+        const pricingBoxX = 0;
+        const pricingBoxY = 231;
+        const pricingBoxW = 539;
+        const pricingBoxH = 66;
+        const pricingBoxRadius = 17;
+        const pricingBoxRealX = pricingBoxX + sideExtension;
+        const pricingBoxRealY = pricingBoxY + topExtension;
+        const r2Pricing = pricingBoxRadius * pricingBoxRadius;
+        const pricingBoxColor = rgbToYuvBT709(13, 22, 29);
+
+        for (let y = pricingBoxRealY; y < pricingBoxRealY + pricingBoxH && y < adjustedHeight; y++) {
+          for (let x = pricingBoxRealX; x < pricingBoxRealX + pricingBoxW && x < adjustedWidth; x++) {
+            let insideBox = false;
+
+            // Main rectangular area (no left corners rounded)
+            if (x >= pricingBoxRealX && x < pricingBoxRealX + pricingBoxW - pricingBoxRadius &&
+                y >= pricingBoxRealY && y < pricingBoxRealY + pricingBoxH) insideBox = true;
+            if (x >= pricingBoxRealX && x < pricingBoxRealX + pricingBoxW &&
+                y >= pricingBoxRealY + pricingBoxRadius && y < pricingBoxRealY + pricingBoxH - pricingBoxRadius) insideBox = true;
+
+            // Top-right rounded corner
+            if (x >= pricingBoxRealX + pricingBoxW - pricingBoxRadius && y < pricingBoxRealY + pricingBoxRadius) {
+              if ((x - (pricingBoxRealX + pricingBoxW - pricingBoxRadius - 1)) ** 2 + (y - (pricingBoxRealY + pricingBoxRadius)) ** 2 <= r2Pricing) insideBox = true;
+            }
+            // Bottom-right rounded corner
+            if (x >= pricingBoxRealX + pricingBoxW - pricingBoxRadius && y >= pricingBoxRealY + pricingBoxH - pricingBoxRadius) {
+              if ((x - (pricingBoxRealX + pricingBoxW - pricingBoxRadius - 1)) ** 2 + (y - (pricingBoxRealY + pricingBoxH - pricingBoxRadius - 1)) ** 2 <= r2Pricing) insideBox = true;
+            }
+
+            if (insideBox) {
+              // Check if this pixel is inside the card boundary
+              let insideCard = false;
+              const adjustedCardX = cardX + sideExtension;
+
+              if (x >= adjustedCardX + cornerRadius && x < adjustedCardX + cardW - cornerRadius && y >= cardY && y < cardY + cardH) insideCard = true;
+              if (x >= adjustedCardX && x < adjustedCardX + cardW && y >= cardY + cornerRadius && y < cardY + cardH - cornerRadius) insideCard = true;
+
+              if (x < adjustedCardX + cornerRadius && y < cardY + cornerRadius) {
+                if ((x - (adjustedCardX + cornerRadius)) ** 2 + (y - (cardY + cornerRadius)) ** 2 <= r2) insideCard = true;
+              }
+              if (x >= adjustedCardX + cardW - cornerRadius && y < cardY + cornerRadius) {
+                if ((x - (adjustedCardX + cardW - cornerRadius - 1)) ** 2 + (y - (cardY + cornerRadius)) ** 2 <= r2) insideCard = true;
+              }
+              if (x < adjustedCardX + cornerRadius && y >= cardY + cardH - cornerRadius) {
+                if ((x - (adjustedCardX + cornerRadius)) ** 2 + (y - (cardY + cardH - cornerRadius - 1)) ** 2 <= r2) insideCard = true;
+              }
+              if (x >= adjustedCardX + cardW - cornerRadius && y >= cardY + cardH - cornerRadius) {
+                if ((x - (adjustedCardX + cardW - cornerRadius - 1)) ** 2 + (y - (cardY + cardH - cornerRadius - 1)) ** 2 <= r2) insideCard = true;
+              }
+
+              // Only draw the pricing box if we're inside the card
+              if (insideCard) {
+                yuvBuffer[y * adjustedWidth + x] = pricingBoxColor.y;
+                if ((y & 1) === 0 && (x & 1) === 0) {
+                  const uvIdx = (y >> 1) * (adjustedWidth >> 1) + (x >> 1);
+                  yuvBuffer[yPlaneSize + uvIdx] = pricingBoxColor.u;
+                  yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = pricingBoxColor.v;
+                }
+              }
+            }
+          }
+        }
+
+        // ADD PRICING TEXT INSIDE BOX
+        const pricingTextCanvas = createCanvas(378, 33);
+        const pricingTextCtx = pricingTextCanvas.getContext('2d');
+        pricingTextCtx.fillStyle = '#FFF';
+        pricingTextCtx.font = '28px "Circular", sans-serif';
+        pricingTextCtx.textAlign = 'left';
+        pricingTextCtx.textBaseline = 'middle';
+        pricingTextCtx.fillText('1 Adult                               £3.00', 0, 33 / 2);
+
+        const pricingTextW = 378, pricingTextH = 33;
+        const pricingTextRealX = 126 + sideExtension;
+        const pricingTextRealY = 248 + topExtension;
+        const pricingTextRGBA = pricingTextCanvas.toBuffer('raw');
+
+        for (let ty = 0; ty < pricingTextH; ty++) {
+          for (let tx = 0; tx < pricingTextW; tx++) {
+            if (pricingTextRGBA[(ty * pricingTextW + tx) * 4 + 3] > 128) {
+              const i = (ty * pricingTextW + tx) * 4;
+              const yuv = rgbToYuvBT709(pricingTextRGBA[i], pricingTextRGBA[i+1], pricingTextRGBA[i+2]);
+              const finalY = pricingTextRealY + ty, finalX = pricingTextRealX + tx;
+              if (finalY >= 0 && finalY < adjustedHeight && finalX >= 0 && finalX < adjustedWidth) {
+                yuvBuffer[finalY * adjustedWidth + finalX] = yuv.y;
+                if ((finalY & 1) === 0 && (finalX & 1) === 0) {
+                  const uvIdx = (finalY >> 1) * (adjustedWidth >> 1) + (finalX >> 1);
+                  yuvBuffer[yPlaneSize + uvIdx] = yuv.u;
+                  yuvBuffer[yPlaneSize + uvPlaneSize + uvIdx] = yuv.v;
+                }
+              }
+            }
+          }
+        }
+
+      ////////
+
+      if (!ffmpegProcess.stdin.write(yuvBuffer)) await once(ffmpegProcess.stdin, 'drain');
+
+      frameCount++;
+      jobStatus.set(videoId, { status: 'processing', progress: Math.round((frameCount / totalFrames) * 100) });
       
       if (frameCount % 150 === 0) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const fps_actual = (frameCount / elapsed).toFixed(1);
-        console.log(`  Progress: ${frameCount}/${totalFrames} frames (${fps_actual} fps)`);
+        console.log(`  Progress: ${frameCount}/${totalFrames} frames (${(frameCount / elapsed).toFixed(1)} fps)`);
       }
     }
 
     ffmpegProcess.stdin.end();
 
     ffmpegProcess.on('close', code => {
-      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-      
       if (code === 0) {
-        console.log(`  ✓ Completed in ${totalTime}s`);
+        console.log(`  ✓ Completed in ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
         jobStatus.set(videoId, { status: 'complete', progress: 100 });
         callback(null, videoId);
       } else {
@@ -609,34 +610,22 @@ async function generateVideo(routeText, videoId, expectedTime, callback) {
   }
 }
 
-// ---------------------------
-// VIDEO CLEANUP (TTL: 1 hour)
-// ---------------------------
 function cleanupOldVideos() {
   const videosDir = path.join(__dirname, 'videos');
   if (!fs.existsSync(videosDir)) return;
-  
-  const now = Date.now();
-  const maxAge = 60 * 60 * 1000; // 1 hour
-  
+  const now = Date.now(), maxAge = 60 * 60 * 1000;
   fs.readdir(videosDir, (err, files) => {
     if (err) return;
-    
     files.forEach(file => {
       const filePath = path.join(videosDir, file);
       fs.stat(filePath, (err, stats) => {
         if (err) return;
-        if (now - stats.mtimeMs > maxAge) {
-          fs.unlink(filePath, () => {
-            console.log(`🗑️  Cleaned up: ${file}`);
-          });
-        }
+        if (now - stats.mtimeMs > maxAge) fs.unlink(filePath, () => console.log(`🗑️  Cleaned up: ${file}`));
       });
     });
   });
 }
 
-// Run cleanup every 15 minutes
 setInterval(cleanupOldVideos, 15 * 60 * 1000);
 
 // ---------------------------
@@ -829,7 +818,7 @@ app.post('/generate', (req, res) => {
   
   const fromLocation = from.trim() || 'Point A';
   const toLocation = to.trim() || 'Point B';
-  const routeText = `${fromLocation} to ${toLocation} Single`;
+  const routeText = `${fromLocation} to ${toLocation} single`;
   
   const videoId = Math.random().toString(36).substr(2, 12);
   
